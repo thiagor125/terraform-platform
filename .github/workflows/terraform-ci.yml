@@ -1,6 +1,13 @@
 name: Terraform CI
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "environments/aws/lab/**"
+      - "modules/aws/network/**"
+      - ".github/workflows/terraform-ci.yml"
   pull_request:
     paths:
       - "environments/aws/lab/**"
@@ -36,3 +43,6 @@ jobs:
 
       - name: Terraform Validate
         run: terraform -chdir=environments/aws/lab validate
+
+      - name: Terraform Test
+        run: terraform -chdir=modules/aws/network test
