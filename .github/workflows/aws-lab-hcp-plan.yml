@@ -1,4 +1,4 @@
-name: AWS Lab - HCP Remote Plan
+name: AWS Lab - Terraform CI
 
 on:
   pull_request:
@@ -6,22 +6,19 @@ on:
       - "environments/aws/lab/**"
       - "modules/aws/network/**"
       - ".github/workflows/aws-lab-hcp-plan.yml"
-      - ".github/workflows/aws-lab-hcp-apply.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: aws-lab-hcp-plan-${{ github.ref }}
+  group: aws-lab-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  plan:
+  checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      TF_TOKEN_app_terraform_io: ${{ secrets.HCP_TERRAFORM_TOKEN }}
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,11 +31,8 @@ jobs:
       - name: Terraform Format
         run: terraform fmt -check -recursive
 
-      - name: Terraform Init
-        run: terraform -chdir=environments/aws/lab init -reconfigure
+      - name: Terraform Init Without Backend
+        run: terraform -chdir=environments/aws/lab init -backend=false
 
       - name: Terraform Validate
         run: terraform -chdir=environments/aws/lab validate
-
-      - name: HCP Remote Plan
-        run: terraform -chdir=environments/aws/lab plan -input=false -no-color
