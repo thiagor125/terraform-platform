@@ -62,9 +62,10 @@ printf 'State bucket     : %s\n' "$STATE_BUCKET"
 echo
 
 TMP_TFVARS="$(mktemp)"
+TMP_S3_BACKEND="$(mktemp)"
 TMP_HCP_BACKEND="$(mktemp)"
 cleanup() {
-  rm -f "$TMP_TFVARS" "$TMP_HCP_BACKEND"
+  rm -f "$TMP_TFVARS" "$TMP_S3_BACKEND" "$TMP_HCP_BACKEND"
 }
 trap cleanup EXIT
 
@@ -78,18 +79,11 @@ aws_region       = "$AWS_REGION"
 aws_profile      = "$AWS_PROFILE"
 EOF
 
-pushd "$HCP_BOOTSTRAP_DIR" >/dev/null
-terraform init -reconfigure \
-  -backend-config="bucket=$STATE_BUCKET" \
-  -backend-config="key=bootstrap/hcp/terraform.tfstate" \
-  -backend-config="region=$AWS_REGION" \
-  -backend-config="profile=$AWS_PROFILE" \
-  -backend-config="encrypt=true" \
-  -backend-config="use_lockfile=true"
-
-terraform plan -var-file="$TMP_TFVARS" -out=tfplan
-terraform apply tfplan
-popd >/dev/null
+cat > "$TMP_S3_BACKEND" <<EOF
+terraform {
+  backend "s3" {}
+}
+EOF
 
 cat > "$TMP_HCP_BACKEND" <<EOF
 terraform {
@@ -104,12 +98,25 @@ terraform {
 }
 EOF
 
-pushd "$AWS_ENV_DIR" >/dev/null
-cp backend.tf backend.tf.s3-backup
-cp "$TMP_HCP_BACKEND" backend.tf
+# Bootstrap HCP/AWS integration. This is idempotent after the first successful apply.
+pushd "$HCP_BOOTSTRAP_DIR" >/dev/null
+terraform init -reconfigure \
+  -backend-config="bucket=$STATE_BUCKET" \
+  -backend-config="key=bootstrap/hcp/terraform.tfstate" \
+  -backend-config="region=$AWS_REGION" \
+  -backend-config="profile=$AWS_PROFILE" \
+  -backend-config="encrypt=true" \
+  -backend-config="use_lockfile=true"
 
-# Ensure Terraform can read the existing S3 state with the same AWS profile
-# before switching the backend to HCP Terraform.
+terraform plan -var-file="$TMP_TFVARS" -out=tfplan
+terraform apply tfplan
+popd >/dev/null
+
+pushd "$AWS_ENV_DIR" >/dev/null
+
+# A previous interrupted migration may have left backend.tf pointing at HCP locally.
+# Force it back to S3 first so Terraform can read and verify the existing state.
+cp "$TMP_S3_BACKEND" backend.tf
 terraform init -reconfigure \
   -backend-config="bucket=$STATE_BUCKET" \
   -backend-config="key=environments/lab/terraform.tfstate" \
@@ -118,16 +125,24 @@ terraform init -reconfigure \
   -backend-config="encrypt=true" \
   -backend-config="use_lockfile=true"
 
-cp "$TMP_HCP_BACKEND" backend.tf
+echo
+STATE_COUNT="$(terraform state list | wc -l | tr -d ' ')"
+echo "Existing S3 state resources: $STATE_COUNT"
+if [[ "$STATE_COUNT" -eq 0 ]]; then
+  echo "Refusing migration because the existing S3 state is empty."
+  exit 1
+fi
 
+# Now change only the backend and let Terraform copy the existing state to HCP.
+cp "$TMP_HCP_BACKEND" backend.tf
 set +e
 terraform init -migrate-state -force-copy
 MIGRATE_RC=$?
 set -e
 
 if [[ $MIGRATE_RC -ne 0 ]]; then
-  echo "State migration failed. Restoring the S3 backend file."
-  mv backend.tf.s3-backup backend.tf
+  echo "State migration failed. Restoring the S3 backend locally."
+  cp "$TMP_S3_BACKEND" backend.tf
   terraform init -reconfigure \
     -backend-config="bucket=$STATE_BUCKET" \
     -backend-config="key=environments/lab/terraform.tfstate" \
@@ -138,16 +153,19 @@ if [[ $MIGRATE_RC -ne 0 ]]; then
   exit $MIGRATE_RC
 fi
 
-rm -f backend.tf.s3-backup
+echo
+HCP_STATE_COUNT="$(terraform state list | wc -l | tr -d ' ')"
+echo "HCP state resources after migration: $HCP_STATE_COUNT"
+if [[ "$HCP_STATE_COUNT" -ne "$STATE_COUNT" ]]; then
+  echo "State count mismatch after migration. Stop here and review before any apply."
+  exit 1
+fi
+
+# Plan only. No infrastructure apply is executed here.
 terraform plan
 popd >/dev/null
 
 echo
 echo "HCP Terraform is now the backend for the AWS lab."
 echo "Open: https://app.terraform.io/app/$HCP_ORGANIZATION/workspaces/$HCP_WORKSPACE"
-echo
-echo "To destroy only the AWS lab network later:"
-echo "  terraform -chdir=environments/aws/lab apply -var='deploy_network=false'"
-echo
-echo "To recreate it:"
-echo "  terraform -chdir=environments/aws/lab apply -var='deploy_network=true'"
+echo "No AWS lab apply was executed by this migration step."
