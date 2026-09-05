@@ -26,7 +26,7 @@ if [[ -z "$HCP_ORGANIZATION" || -z "$HCP_ADMIN_EMAIL" ]]; then
   exit 1
 fi
 
-if [[ -z "${TF_TOKEN_app_terraform_io:-}" ]]; then
+if [[ -z "${TF_TOKEN_app_terraform_io:-}" && -z "${TFE_TOKEN:-}" ]]; then
   echo
   echo "HCP Terraform API token is required."
   echo "Create a NEW user token in HCP Terraform, then paste it below."
@@ -40,7 +40,12 @@ if [[ -z "${TF_TOKEN_app_terraform_io:-}" ]]; then
   fi
 
   export TF_TOKEN_app_terraform_io="$HCP_TOKEN"
+  export TFE_TOKEN="$HCP_TOKEN"
   unset HCP_TOKEN
+elif [[ -n "${TF_TOKEN_app_terraform_io:-}" && -z "${TFE_TOKEN:-}" ]]; then
+  export TFE_TOKEN="$TF_TOKEN_app_terraform_io"
+elif [[ -n "${TFE_TOKEN:-}" && -z "${TF_TOKEN_app_terraform_io:-}" ]]; then
+  export TF_TOKEN_app_terraform_io="$TFE_TOKEN"
 fi
 
 ACCOUNT_ID="$(aws sts get-caller-identity --profile "$AWS_PROFILE" --query Account --output text)"
