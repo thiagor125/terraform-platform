@@ -44,5 +44,8 @@ jobs:
       - name: Terraform Validate
         run: terraform -chdir=environments/aws/lab validate
 
+      - name: Terraform Init Module Tests
+        run: terraform -chdir=modules/aws/network init -backend=false
+
       - name: Terraform Test
         run: terraform -chdir=modules/aws/network test
