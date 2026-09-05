@@ -1,15 +1,15 @@
 # Architecture
 
-The repository is intentionally organized as a monorepo so the complete Terraform flow can be followed in one place.
+This repository keeps the Terraform platform, reusable modules and deployable environments in one place so the full infrastructure flow is easy to follow.
 
 ```text
 terraform-platform/
 │
-├── platform/             bootstrap, identity and HCP Terraform
+├── platform/             bootstrap and identity for the Terraform platform
 ├── modules/              reusable infrastructure code
 ├── environments/         deployable environments
-├── scripts/              lifecycle helpers
-└── .github/workflows/    automation
+├── docs/                 architecture and operating notes
+└── .github/workflows/    CI checks only
 ```
 
 ## Control plane
@@ -20,28 +20,36 @@ Developer
     ▼
 GitHub
     │
+    │ VCS integration
     ▼
 HCP Terraform
-├── Remote Runs
-├── Remote State
+├── Runs
 ├── Plan
 ├── Apply
-└── Audit
+├── State
+├── Resources
+└── Run history
     │
     ▼
-OIDC / Dynamic AWS Credentials
+OIDC / dynamic AWS credentials
     │
     ▼
 AWS
 ```
 
-GitHub is the source-control and collaboration layer. HCP Terraform is the Terraform execution and state control layer. AWS receives short-lived credentials from HCP Terraform through workload identity federation instead of long-lived AWS keys.
+GitHub stores and reviews the Terraform code. HCP Terraform executes infrastructure runs, keeps the remote state and records the run history. AWS trusts HCP Terraform through workload identity federation, so the workspace can use short-lived credentials instead of static AWS keys.
 
 ## AWS lab
 
-The AWS environment uses the HCP Terraform workspace `thiagor125/aws-lab` as its permanent backend.
+The current environment is the HCP Terraform workspace `aws-lab`.
 
-The lab workspace manages networking resources only:
+Its working directory is:
+
+```text
+environments/aws/lab
+```
+
+It manages only the lab networking layer:
 
 - VPC
 - public and private subnets
@@ -50,35 +58,63 @@ The lab workspace manages networking resources only:
 - route table associations
 - public Internet route
 
-The HCP bootstrap resources are intentionally separated from the lab workspace. This lets the network be destroyed to reduce lab cost without removing the identity path needed to rebuild it.
+The HCP-to-AWS identity resources are intentionally outside the `aws-lab` state. This allows the lab network to be destroyed without removing the credentials HCP needs to rebuild it.
 
-## Lifecycle
+## Change flow
 
 ```text
-Git change
+Terraform code change
     ↓
-Remote plan in HCP Terraform
+Push or pull request in GitHub
     ↓
-Review
+HCP Terraform VCS run
     ↓
-Explicit approval
+Plan
     ↓
-Remote apply/destroy in HCP Terraform
+Human review
     ↓
-Remote state update
+Confirm & Apply
     ↓
-Verification plan
+AWS
 ```
 
-Destroying the AWS lab removes only resources tracked by the `aws-lab` state. Rebuilding runs the same Terraform configuration against the empty workspace state and recreates those resources.
+Auto apply is disabled. A successful plan does not change AWS until someone explicitly approves the run in HCP Terraform.
+
+GitHub Actions is used only for non-destructive CI checks such as formatting and validation.
+
+## Lab lifecycle
+
+The lab can be removed and recreated from the HCP Terraform UI.
+
+Destroy path:
+
+```text
+Workspaces
+→ aws-lab
+→ Settings
+→ Destruction and deletion
+→ Queue destroy plan
+```
+
+Rebuild path:
+
+```text
+Workspaces
+→ aws-lab
+→ New run
+→ Start run
+→ Confirm & Apply
+```
+
+Before a destroy or rebuild, always review the resource counts and the exact addresses Terraform plans to change.
 
 ## Module versioning
 
-Deployable environments reference reusable modules through immutable Git commit references. This prevents a change to the repository default branch from silently changing the module code used by an environment.
+Deployable environments reference reusable modules through immutable Git commit references. This prevents a future change to `main` from silently replacing the module code used by an existing environment.
 
 ## Future Azure mapping
 
-The same architecture will be extended to Azure:
+The same control-plane model can be extended to Azure:
 
 ```text
 GitHub
@@ -95,3 +131,5 @@ Microsoft Entra ID / Azure RBAC
     ▼
 Azure subscriptions and resources
 ```
+
+The intended next stage is to introduce separate Azure workspaces for development, homologation and production while keeping the same approval and audit model.
