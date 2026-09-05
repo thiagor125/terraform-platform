@@ -26,6 +26,25 @@ if [[ -z "$HCP_ORGANIZATION" || -z "$HCP_ADMIN_EMAIL" ]]; then
   exit 1
 fi
 
+# Avoid Terraform's interactive browser login flow on remote/headless terminals.
+# Terraform accepts HCP credentials through TF_TOKEN_app_terraform_io.
+if [[ -z "${TF_TOKEN_app_terraform_io:-}" ]]; then
+  echo
+  echo "HCP Terraform API token is required."
+  echo "Create a NEW user token in HCP Terraform, then paste it below."
+  echo "The token will not be echoed or stored in the repository."
+  read -rsp "HCP Terraform token: " HCP_TOKEN
+  echo
+
+  if [[ -z "$HCP_TOKEN" ]]; then
+    echo "Token is required."
+    exit 1
+  fi
+
+  export TF_TOKEN_app_terraform_io="$HCP_TOKEN"
+  unset HCP_TOKEN
+fi
+
 ACCOUNT_ID="$(aws sts get-caller-identity --profile "$AWS_PROFILE" --query Account --output text)"
 STATE_BUCKET="${PROJECT_NAME}-${ACCOUNT_ID}-${AWS_REGION}-tfstate"
 
@@ -37,11 +56,6 @@ printf 'AWS account      : %s\n' "$ACCOUNT_ID"
 printf 'AWS region       : %s\n' "$AWS_REGION"
 printf 'State bucket     : %s\n' "$STATE_BUCKET"
 echo
-
-if [[ ! -f "$HOME/.terraform.d/credentials.tfrc.json" ]]; then
-  echo "HCP Terraform authentication is required."
-  terraform login app.terraform.io
-fi
 
 TMP_TFVARS="$(mktemp)"
 TMP_HCP_BACKEND="$(mktemp)"
