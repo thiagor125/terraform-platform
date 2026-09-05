@@ -1,22 +1,10 @@
-# Terraform Lab
+# Terraform Platform Lab
 
-This is my hands-on Terraform lab for learning enterprise-style infrastructure workflows with reusable modules, remote execution, remote state, identity federation and controlled lifecycle operations.
+A hands-on Terraform platform lab focused on the way infrastructure is operated in a real team: code in GitHub, remote runs and state in HCP Terraform, short-lived cloud credentials through OIDC, and explicit approval before infrastructure changes are applied.
 
-Everything lives in one repository so the architecture is easier to understand, audit and operate.
+The repository is intentionally small enough to understand end to end, but the structure is meant to scale to multiple environments and, later, Azure.
 
-## Repository layout
-
-```text
-terraform-platform/
-├── platform/                 # bootstrap, identity and HCP Terraform setup
-├── modules/                  # reusable Terraform modules
-├── environments/             # deployable AWS and Azure environments
-├── scripts/                  # lifecycle and migration helpers
-├── docs/                     # architecture notes
-└── .github/workflows/        # CI/CD and HCP remote execution
-```
-
-## Current architecture
+## How it works
 
 ```text
 Developer
@@ -24,123 +12,124 @@ Developer
     ▼
 GitHub
     │
+    │ push / pull request
     ▼
 HCP Terraform
-├── Remote Runs
-├── Remote State
+├── Runs
 ├── Plan
 ├── Apply
-└── Audit
+├── State
+├── Resources
+└── Run history
     │
     ▼
-OIDC / Dynamic Credentials
+OIDC / dynamic credentials
     │
     ▼
 AWS
 ```
 
-The AWS lab uses the HCP Terraform workspace `thiagor125/aws-lab` as its permanent backend and execution layer.
+GitHub is the source of truth for the Terraform code. HCP Terraform is the control plane for infrastructure execution and state. AWS receives temporary credentials from HCP Terraform instead of long-lived access keys.
 
-## What is running today
+## Repository structure
 
-The AWS lab manages a small network in `us-east-1`:
+```text
+terraform-platform/
+├── platform/                 # bootstrap and identity used by the Terraform platform
+├── modules/                  # reusable Terraform modules
+├── environments/             # deployable environments
+│   └── aws/lab/              # current AWS lab workspace
+├── docs/                     # architecture and operating notes
+└── .github/workflows/        # CI checks only
+```
 
-- one VPC
-- two public subnets
-- two private subnets
-- one Internet Gateway
+## Current AWS lab
+
+The `aws-lab` HCP Terraform workspace currently manages a small network in `us-east-1`:
+
+- 1 VPC
+- 2 public subnets
+- 2 private subnets
+- 1 Internet Gateway
 - public and private route tables
 - route table associations
-- HCP Terraform dynamic AWS credentials through OIDC
+- public Internet route
 
-The environment is under `environments/aws/lab` and consumes the reusable network module from `modules/aws/network` using an immutable Git commit reference.
+The environment code lives in `environments/aws/lab` and consumes the reusable network module from `modules/aws/network` through an immutable Git commit reference.
 
-## GitHub to HCP Terraform
+## Day-to-day workflow
 
-Pull requests can run a speculative remote plan through:
-
-```text
-.github/workflows/aws-lab-hcp-plan.yml
-```
-
-Manual applies can run through:
+For normal changes, edit the Terraform code and push it to GitHub. HCP Terraform is connected directly to this repository and automatically creates a run when relevant files change.
 
 ```text
-.github/workflows/aws-lab-hcp-apply.yml
+Code change
+    ↓
+GitHub
+    ↓
+HCP Terraform plan
+    ↓
+Review the proposed changes
+    ↓
+Confirm & Apply in the HCP UI
+    ↓
+AWS
 ```
 
-The GitHub runner does not need AWS credentials for these workflows. It authenticates to HCP Terraform, and HCP Terraform obtains short-lived AWS credentials through OIDC for the remote run.
+Auto apply is intentionally disabled. Infrastructure changes require an explicit approval in HCP Terraform.
 
-The GitHub repository requires the secret:
+GitHub Actions is kept only for CI checks such as Terraform formatting and validation. It does not apply or destroy infrastructure.
+
+## Destroying and rebuilding the lab
+
+The lab is designed so the AWS resources managed by `aws-lab` can be removed when they are not needed and recreated later from the same Terraform code.
+
+### Destroy
+
+In HCP Terraform:
 
 ```text
-HCP_TERRAFORM_TOKEN
+Workspaces
+→ aws-lab
+→ Settings
+→ Destruction and deletion
+→ Queue destroy plan
 ```
 
-Do not commit HCP tokens to the repository.
+Review the destroy plan carefully before confirming it. The expected lab destroy removes only resources tracked by the `aws-lab` workspace.
 
-## AWS lab lifecycle
+### Rebuild
 
-The lab can be intentionally destroyed when it is not being used, while keeping the HCP/OIDC control plane available so Terraform can rebuild it later.
-
-First export a valid HCP Terraform token as `TF_TOKEN_app_terraform_io`.
-
-Preview the current configuration:
-
-```bash
-make aws-plan
-```
-
-Destroy the managed AWS lab resources:
-
-```bash
-make aws-destroy
-```
-
-The destroy helper always runs a destroy plan first and requires the exact confirmation phrase:
+After the workspace state is empty, keep the Terraform code in GitHub unchanged and start a normal run in HCP Terraform:
 
 ```text
-DESTROY-AWS-LAB
+Workspaces
+→ aws-lab
+→ New run
+→ Start run
 ```
 
-Recreate the AWS lab from the Terraform code:
+HCP Terraform should plan the resources again. Review the plan and use `Confirm & Apply` to recreate the lab.
 
-```bash
-make aws-rebuild
-```
-
-The rebuild helper runs a plan first and requires:
-
-```text
-REBUILD-AWS-LAB
-```
-
-After rebuild, it runs another plan to verify convergence.
-
-The destroy lifecycle targets only the resources managed by the `aws-lab` workspace. HCP Terraform, its workspace, the HCP-to-AWS OIDC provider and the IAM roles used for dynamic credentials are intentionally kept outside that workspace so the lab remains rebuildable.
+The HCP workspace, AWS OIDC provider, and IAM roles used for HCP dynamic credentials are intentionally managed outside the `aws-lab` workspace. That keeps the control path available after the lab network itself is destroyed.
 
 ## Safety model
 
-Infrastructure changes follow this sequence:
+Before any infrastructure change, the intended flow is always:
 
 ```text
 Current state
     ↓
-Terraform plan
+Plan
     ↓
-Review add/change/destroy
+Review add / change / destroy
     ↓
 Explicit approval
     ↓
-Terraform apply/destroy
+Apply or destroy
     ↓
-Verification plan
+Verify the resulting state
 ```
 
-Destructive HCP bootstrap plans are blocked by `scripts/hcp-bootstrap-and-migrate.sh`.
+## Next step
 
-## Next
-
-The next expansion is Azure using the same control-plane pattern: GitHub, HCP Terraform, workload identity federation, remote state, controlled plans/applies and separated environments.
-
-This is a learning and architecture lab, not a finished production platform.
+The next major expansion is Azure using the same operating model: GitHub for code, HCP Terraform for runs and state, workload identity federation for authentication, and separate workspaces for environments such as development, homologation and production.
