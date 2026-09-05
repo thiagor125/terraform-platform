@@ -26,8 +26,6 @@ if [[ -z "$HCP_ORGANIZATION" || -z "$HCP_ADMIN_EMAIL" ]]; then
   exit 1
 fi
 
-# Avoid Terraform's interactive browser login flow on remote/headless terminals.
-# Terraform accepts HCP credentials through TF_TOKEN_app_terraform_io.
 if [[ -z "${TF_TOKEN_app_terraform_io:-}" ]]; then
   echo
   echo "HCP Terraform API token is required."
@@ -54,6 +52,7 @@ printf 'HCP project      : %s\n' "$HCP_PROJECT"
 printf 'HCP workspace    : %s\n' "$HCP_WORKSPACE"
 printf 'AWS account      : %s\n' "$ACCOUNT_ID"
 printf 'AWS region       : %s\n' "$AWS_REGION"
+printf 'AWS profile      : %s\n' "$AWS_PROFILE"
 printf 'State bucket     : %s\n' "$STATE_BUCKET"
 echo
 
@@ -79,6 +78,7 @@ terraform init -reconfigure \
   -backend-config="bucket=$STATE_BUCKET" \
   -backend-config="key=bootstrap/hcp/terraform.tfstate" \
   -backend-config="region=$AWS_REGION" \
+  -backend-config="profile=$AWS_PROFILE" \
   -backend-config="encrypt=true" \
   -backend-config="use_lockfile=true"
 
@@ -103,6 +103,18 @@ pushd "$AWS_ENV_DIR" >/dev/null
 cp backend.tf backend.tf.s3-backup
 cp "$TMP_HCP_BACKEND" backend.tf
 
+# Ensure Terraform can read the existing S3 state with the same AWS profile
+# before switching the backend to HCP Terraform.
+terraform init -reconfigure \
+  -backend-config="bucket=$STATE_BUCKET" \
+  -backend-config="key=environments/lab/terraform.tfstate" \
+  -backend-config="region=$AWS_REGION" \
+  -backend-config="profile=$AWS_PROFILE" \
+  -backend-config="encrypt=true" \
+  -backend-config="use_lockfile=true"
+
+cp "$TMP_HCP_BACKEND" backend.tf
+
 set +e
 terraform init -migrate-state -force-copy
 MIGRATE_RC=$?
@@ -115,6 +127,7 @@ if [[ $MIGRATE_RC -ne 0 ]]; then
     -backend-config="bucket=$STATE_BUCKET" \
     -backend-config="key=environments/lab/terraform.tfstate" \
     -backend-config="region=$AWS_REGION" \
+    -backend-config="profile=$AWS_PROFILE" \
     -backend-config="encrypt=true" \
     -backend-config="use_lockfile=true" || true
   exit $MIGRATE_RC
