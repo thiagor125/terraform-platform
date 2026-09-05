@@ -5,7 +5,7 @@ locals {
     Project     = var.project_name
     Environment = var.environment
     ManagedBy   = "Terraform"
-    Repository  = "terraform-live"
+    Repository  = "terraform-platform"
     Purpose     = "EnterpriseTerraformPlatform"
   }
 }
