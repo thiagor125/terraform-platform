@@ -1,5 +1,7 @@
 module "network" {
-  source = "../../../modules/aws/network"
+  count = var.deploy_network ? 1 : 0
+
+  source = "git::https://github.com/thiagor125/terraform-platform.git//modules/aws/network?ref=main"
 
   name_prefix          = local.name_prefix
   vpc_cidr             = var.vpc_cidr
