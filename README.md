@@ -1,135 +1,86 @@
 # Terraform Platform Lab
 
-A hands-on Terraform platform lab focused on the way infrastructure is operated in a real team: code in GitHub, remote runs and state in HCP Terraform, short-lived cloud credentials through OIDC, and explicit approval before infrastructure changes are applied.
+Laboratório criado para praticar um fluxo completo utilizando Terraform, GitHub, HCP Terraform e AWS.
 
-The repository is intentionally small enough to understand end to end, but the structure is meant to scale to multiple environments and, later, Azure.
+O código fica no GitHub, enquanto o HCP Terraform executa os planos, armazena o state e controla as alterações na infraestrutura.
 
-## How it works
+A autenticação com a AWS utiliza OIDC e credenciais temporárias, sem armazenar chaves de acesso no repositório.
 
-```text
-Developer
-    │
-    ▼
-GitHub
-    │
-    │ push / pull request
-    ▼
-HCP Terraform
-├── Runs
-├── Plan
-├── Apply
-├── State
-├── Resources
-└── Run history
-    │
-    ▼
-OIDC / dynamic credentials
-    │
-    ▼
-AWS
-```
+## Como funciona
 
-GitHub is the source of truth for the Terraform code. HCP Terraform is the control plane for infrastructure execution and state. AWS receives temporary credentials from HCP Terraform instead of long-lived access keys.
+GitHub  
+↓  
+HCP Terraform  
+↓  
+Plan e aprovação manual  
+↓  
+AWS  
 
-## Repository structure
+Quando uma alteração é enviada para o GitHub, o HCP Terraform gera um novo plan. Após a revisão e aprovação manual, a alteração pode ser aplicada na AWS.
 
-```text
-terraform-platform/
-├── platform/                 # bootstrap and identity used by the Terraform platform
-├── modules/                  # reusable Terraform modules
-├── environments/             # deployable environments
-│   └── aws/lab/              # current AWS lab workspace
-├── docs/                     # architecture and operating notes
-└── .github/workflows/        # CI checks only
-```
+## Recursos criados
 
-## Current AWS lab
-
-The `aws-lab` HCP Terraform workspace currently manages a small network in `us-east-1`:
+O workspace `aws-lab` gerencia uma estrutura de rede na região `us-east-1`:
 
 - 1 VPC
-- 2 public subnets
-- 2 private subnets
+- 2 subnets públicas
+- 2 subnets privadas
 - 1 Internet Gateway
-- public and private route tables
-- route table associations
-- public Internet route
+- Tabelas de rotas públicas e privadas
+- Associações das tabelas de rotas
+- Rota pública para a Internet
 
-The environment code lives in `environments/aws/lab` and consumes the reusable network module from `modules/aws/network` through an immutable Git commit reference.
+## Estrutura do repositório
 
-## Day-to-day workflow
+terraform-platform/  
+├── platform/ — Configuração da plataforma e autenticação  
+├── modules/ — Módulos reutilizáveis  
+├── environments/  
+│   └── aws/lab/ — Ambiente do laboratório AWS  
+├── docs/ — Documentação  
+└── .github/workflows/ — Formatação e validação do Terraform  
 
-For normal changes, edit the Terraform code and push it to GitHub. HCP Terraform is connected directly to this repository and automatically creates a run when relevant files change.
+## Fluxo de alterações
 
-```text
-Code change
-    ↓
-GitHub
-    ↓
-HCP Terraform plan
-    ↓
-Review the proposed changes
-    ↓
-Confirm & Apply in the HCP UI
-    ↓
-AWS
-```
+Alteração no código  
+↓  
+Push para o GitHub  
+↓  
+Plan no HCP Terraform  
+↓  
+Revisão e aprovação  
+↓  
+Apply na AWS  
 
-Auto apply is intentionally disabled. Infrastructure changes require an explicit approval in HCP Terraform.
+O apply automático está desativado. Toda alteração precisa ser revisada e aprovada manualmente no HCP Terraform.
 
-GitHub Actions is kept only for CI checks such as Terraform formatting and validation. It does not apply or destroy infrastructure.
+O GitHub Actions é utilizado apenas para verificar a formatação e validar o código Terraform. Ele não cria nem remove recursos da AWS.
 
-## Destroying and rebuilding the lab
+## Como destruir o laboratório
 
-The lab is designed so the AWS resources managed by `aws-lab` can be removed when they are not needed and recreated later from the same Terraform code.
+No HCP Terraform, acesse:
 
-### Destroy
+Workspaces → aws-lab → Settings → Destruction and deletion → Queue destroy plan
 
-In HCP Terraform:
+Revise os recursos que serão removidos antes de confirmar o destroy.
 
-```text
-Workspaces
-→ aws-lab
-→ Settings
-→ Destruction and deletion
-→ Queue destroy plan
-```
+## Como reconstruir o laboratório
 
-Review the destroy plan carefully before confirming it. The expected lab destroy removes only resources tracked by the `aws-lab` workspace.
+Depois que os recursos forem removidos, o ambiente pode ser criado novamente pelo caminho:
 
-### Rebuild
+Workspaces → aws-lab → New run → Start run → Confirm & Apply
 
-After the workspace state is empty, keep the Terraform code in GitHub unchanged and start a normal run in HCP Terraform:
+O HCP Terraform buscará a configuração no GitHub e recriará os recursos na AWS.
 
-```text
-Workspaces
-→ aws-lab
-→ New run
-→ Start run
-```
+Os recursos de autenticação utilizados pelo HCP Terraform são mantidos separadamente. Dessa forma, a conexão com a AWS continua funcionando mesmo depois que o laboratório é destruído.
 
-HCP Terraform should plan the resources again. Review the plan and use `Confirm & Apply` to recreate the lab.
+## Próximo passo
 
-The HCP workspace, AWS OIDC provider, and IAM roles used for HCP dynamic credentials are intentionally managed outside the `aws-lab` workspace. That keeps the control path available after the lab network itself is destroyed.
+Utilizar este laboratório como base para uma futura implantação na Azure, mantendo o mesmo modelo:
 
-## Safety model
-
-Before any infrastructure change, the intended flow is always:
-
-```text
-Current state
-    ↓
-Plan
-    ↓
-Review add / change / destroy
-    ↓
-Explicit approval
-    ↓
-Apply or destroy
-    ↓
-Verify the resulting state
-```
-
-## Next step
-
-The next major expansion is Azure using the same operating model: GitHub for code, HCP Terraform for runs and state, workload identity federation for authentication, and separate workspaces for environments such as development, homologation and production.
+- Código versionado no GitHub
+- Execuções e state no HCP Terraform
+- Autenticação sem credenciais permanentes
+- Módulos reutilizáveis
+- Ambientes separados
+- Revisão e aprovação antes das alterações
