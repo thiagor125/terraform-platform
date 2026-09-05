@@ -12,6 +12,7 @@ HCP_WORKSPACE="${HCP_WORKSPACE:-aws-lab}"
 
 command -v terraform >/dev/null 2>&1 || { echo "Terraform is required."; exit 1; }
 command -v aws >/dev/null 2>&1 || { echo "AWS CLI is required."; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "jq is required for plan safety checks."; exit 1; }
 
 if [[ -z "${HCP_ORGANIZATION:-}" ]]; then
   read -rp "HCP Terraform organization name: " HCP_ORGANIZATION
@@ -98,7 +99,8 @@ terraform {
 }
 EOF
 
-# Bootstrap HCP/AWS integration. This is idempotent after the first successful apply.
+# Bootstrap HCP/AWS integration.
+# Safety rule: destructive/replacement actions are never applied automatically.
 pushd "$HCP_BOOTSTRAP_DIR" >/dev/null
 terraform init -reconfigure \
   -backend-config="bucket=$STATE_BUCKET" \
@@ -109,7 +111,34 @@ terraform init -reconfigure \
   -backend-config="use_lockfile=true"
 
 terraform plan -var-file="$TMP_TFVARS" -out=tfplan
-terraform apply tfplan
+
+PLAN_JSON="$(terraform show -json tfplan)"
+CREATE_COUNT="$(jq '[.resource_changes[]? | select(.change.actions | index("create"))] | length' <<<"$PLAN_JSON")"
+UPDATE_COUNT="$(jq '[.resource_changes[]? | select(.change.actions == ["update"])] | length' <<<"$PLAN_JSON")"
+DELETE_COUNT="$(jq '[.resource_changes[]? | select(.change.actions | index("delete"))] | length' <<<"$PLAN_JSON")"
+
+printf 'HCP bootstrap safety check: %s create, %s update, %s delete/replace\n' "$CREATE_COUNT" "$UPDATE_COUNT" "$DELETE_COUNT"
+
+if [[ "$DELETE_COUNT" -gt 0 ]]; then
+  echo
+  echo "BLOCKED: the HCP bootstrap plan contains delete or replacement actions."
+  echo "No apply was executed. Review the organization/project/workspace values before continuing."
+  terraform show -no-color tfplan
+  exit 2
+fi
+
+if [[ "$CREATE_COUNT" -gt 0 || "$UPDATE_COUNT" -gt 0 ]]; then
+  echo
+  echo "The HCP/AWS bootstrap plan is non-destructive, but it will change platform resources."
+  read -rp "Type yes to apply this bootstrap plan: " CONFIRM_BOOTSTRAP
+  if [[ "$CONFIRM_BOOTSTRAP" != "yes" ]]; then
+    echo "Bootstrap apply cancelled."
+    exit 0
+  fi
+  terraform apply tfplan
+else
+  echo "HCP/AWS bootstrap is already converged; nothing to apply."
+fi
 popd >/dev/null
 
 pushd "$AWS_ENV_DIR" >/dev/null
