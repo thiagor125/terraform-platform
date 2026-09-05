@@ -16,12 +16,6 @@ variable "environment" {
   default     = "lab"
 }
 
-variable "deploy_network" {
-  description = "Controls whether the AWS lab network exists. Set to false to destroy the managed network and true to recreate it."
-  type        = bool
-  default     = true
-}
-
 variable "vpc_cidr" {
   description = "CIDR block used by the lab VPC."
   type        = string
